@@ -1,8 +1,8 @@
 import numpy as np
-import sympy as sp 
 import pandas as pd 
 from scipy.sparse import diags
 from scipy.special import expit
+# import sympy as sp 
 
 
 
@@ -47,21 +47,21 @@ def numpy_solver(parameters):
     fw_values = np.zeros(len(concentration))
 
     
-    def max_fw():
-        Sw = sp.symbols('Sw')
+    # def max_fw():
+    #     Sw = sp.symbols('Sw')
 
-        lmbd_w = (k*(krw0 * ((Sw - Swc) /(1 - Swc - Sor))**nw)) / mu_w
-        lmbd_o = (kro0 * (1 - ((Sw - Swc) / (1 - Swc - Sor)))**no) / mu_o
+    #     lmbd_w = (k*(krw0 * ((Sw - Swc) /(1 - Swc - Sor))**nw)) / mu_w
+    #     lmbd_o = (kro0 * (1 - ((Sw - Swc) / (1 - Swc - Sor)))**no) / mu_o
 
-        fw = lmbd_w / (lmbd_w + lmbd_o)
+    #     fw = lmbd_w / (lmbd_w + lmbd_o)
         
-        derivate_1 = sp.diff(fw,Sw)
-        derivate_2 = sp.diff(derivate_1,Sw)
+    #     derivate_1 = sp.diff(fw,Sw)
+    #     derivate_2 = sp.diff(derivate_1,Sw)
 
-        maximum_point = sp.nsolve(derivate_2,Sw, [(Swc+1e-5),(1-Sor-1e-5)] , solver = 'bisect', verify = False)
-        maximum_value = derivate_1.subs(Sw,maximum_point)
+    #     maximum_point = sp.nsolve(derivate_2,Sw, [(Swc+1e-5),(1-Sor-1e-5)] , solver = 'bisect', verify = False)
+    #     maximum_value = derivate_1.subs(Sw,maximum_point)
 
-        return float(maximum_value)
+    #     return float(maximum_value)
 
     def Krw(Sw):
         sn = np.clip( (Sw - Swc) /(1 - Swc - Sor) , 0.0, 1.0)
@@ -77,8 +77,8 @@ def numpy_solver(parameters):
     def linear_interpolation(c,v,x):
         return np.interp(x,c,v)
 
-    fw_values[:] = max_fw()
-    fw_max_value = np.nanmax(fw_values)
+    # fw_values[:] = max_fw()
+    # fw_max_value = np.nanmax(fw_values)
     
     prod_history = []
 
