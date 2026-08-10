@@ -13,8 +13,8 @@ The standout of this project is the high-performance given by the _JAX_ library,
   - Cumulative Oil Production
 - `main.py`  : Main execution script. It calls the desired version of the simulator (_NumPy_ or _JAX_), save the returned _pandas_ `DataFrames` in `.txt` files in `outputs/` folder and calls the plot archive
 - `optimization.py` : Economic optimization script that uses the `minimize` routine from _SciPy_ library combined with `jax.value_and_grad` function and `jax.jit` for better performance. The goal is is to find the optimal injection time that maximizes the profit function
-  ## Requisites
-  To run the simulator, you will need Python 3 installed along with the following libraries:
+## Requisites
+To run the simulator, you will need Python 3 installed along with the following libraries:
   ```bash
   pip install numpy scipy pandas matplotlib jax jaxlib
 
