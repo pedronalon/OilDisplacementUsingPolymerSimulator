@@ -8,10 +8,6 @@ from src.solvers.impes_numpy import calc_prod
 from src.solvers.impes_jax import calc_prod_jax
 import matplotlib.pyplot as plt
 
-# import os
-# os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-
-# jax.config.update("jax_enable_x64", True)
 cont = 0
 path = '/home/pedro/Área de trabalho/Faculdade /OilDisplacementUsingPolymerSimulator/inputs/impes_input.json'
 
@@ -41,10 +37,7 @@ def profit(t_inj):
 
     return -f
 
-
 f_jax_jit = jax.jit(jax.value_and_grad(profit,argnums=0))
-
-
 
 def F(t_inj_arr):
     t_inj = t_inj_arr[0]
@@ -53,7 +46,6 @@ def F(t_inj_arr):
 
 
     return float(value), np.array([float (grad)])
-
 
 
 def optmz_jax(): 
@@ -75,8 +67,8 @@ def optmz_jax():
     print(sol)
     return sol
 
-
 sol = optmz_jax()
+
 t_inj = jnp.arange(0,1400,25)
 varredura = jnp.zeros_like(t_inj)
 
@@ -96,32 +88,3 @@ plt.grid(True)
 plt.legend()
 plt.show()
 
-
-
-# def optmz():
-#     path = '/home/pedro/Área de trabalho/Faculdade /OilDisplacementUsingPolymerSimulator/inputs/impes_input.json'
-
-#     with open(path,'r') as p:
-#         parameters = json.load(p)
-    
-#     sol = minimize(F,x0=50.00, args=(parameters), method='L-BFGS-B', bounds=[(0.0,parameters.get("tf"))], jac=None,options={'eps': 1.0})
-    
-#     print(sol)
-
-# def varredura_numpy():
-#     path = '/home/pedro/Área de trabalho/Faculdade /OilDisplacementUsingPolymerSimulator/inputs/impes_input.json'
-
-#     with open(path,'r') as p:
-#         parameters = json.load(p)
-
-#     t_inj = np.arange(0,1400,200)
-#     varredura = np.zeros_like(t_inj)
-
-#     for i in range(len(t_inj)):
-        
-#         varredura[i] = F(t_inj[i], parameters)
-
-
-#     plt.figure(figsize=(12,8))
-#     plt.plot(t_inj,-varredura,'-ro')
-#     plt.show()
