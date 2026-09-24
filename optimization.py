@@ -1,111 +1,106 @@
-import numpy as np 
-import jax.numpy as jnp
-import jax 
 import json
 import time
-from scipy.optimize import minimize
-from src.solvers.impes_numpy import calc_prod 
+
+import jax
+import jax.numpy as jnp
+import optax
+import optax.tree_utils as otu
+
 from src.solvers.impes_jax import calc_prod_jax
-import matplotlib.pyplot as plt
+from collections import namedtuple 
 
 # jax.config.update('jax_platform_name', 'cpu')
 jax.config.update("jax_enable_x64", True)
 
-cont = 0
-path = '/home/pedro/Área de trabalho/Faculdade /OilDisplacementUsingPolymerSimulator/inputs/impes_input.json'
 
-with open(path,'r') as p:
-    parameters = json.load(p)
+
+
+path = '/home/pedro/Área de trabalho/Faculdade /OilDisplacementUsingPolymerSimulator/inputs/impes_input.json'
+with open(path, 'r') as p:
+    parameters_dict = json.load(p)
+
+params_immutable = namedtuple('params_immutable', parameters_dict.keys())
+parameters = params_immutable(**parameters_dict)
+
+TF = float(parameters.tf) 
 
 def profit(t_inj):
-    
-    # t_inj = t_inj_arr[0] 
-    
-
-    prod = calc_prod_jax(t_inj,parameters)
-   
-
-    # custo goma xantana 48,90R$/kg , considerando 500ppm de polimero (0.0005kg), 
-    # com uma vazao de entrada de 685ft³/dia, 685ft³ é aproximadamente 19000kg, então 
-    # usamos 9,5kg de polimero por dia, totalizando 464,55R$/dia 
-    # barril petroleo 5,6146ft³, valendo aproximadamente 388,29 R$
-   
+    prod = calc_prod_jax(t_inj, parameters)
     price = 388.29
     volume = 5.6156
     lmbd = 464.55
+    f = (prod / volume) * price - (lmbd * t_inj)
+    return -f / 1e7
 
 
-    f = (prod/volume)*price - (lmbd*t_inj)
+# ---- Bound handling: t_inj = TF * sigmoid(z) keeps t_inj in (0, TF) ----
+def z_to_t(z):
+    return TF * jax.nn.sigmoid(z)
 
-    return (-f/1e7)
+def t_to_z(t):
+    p = t / TF
+    return jnp.log(p) - jnp.log1p(-p)   # logit
 
-# # jacobian_rev = jax.jit(jax.jacfwd(profit))
-# # profit_jit = jax.jit(profit)
-# @jax.jit
-# def fwd(t_inj):
-#     value, grad = jax.jvp(profit,(t_inj,),(1.0,))
-#     return value, grad
-
-
-f_jax_jit = jax.jit(jax.value_and_grad(profit,argnums=0))
-fun = jax.value_and_grad(profit,argnums=0)
+def objective(z):
+    # z has shape (1,), profit expects a scalar
+    return profit(z_to_t(z)[0])
 
 
-def F(t_inj_arr):
-    t_inj = t_inj_arr[0]
-    
-    value, grad = fun(t_inj)
+def run_opt(z0, fun, opt, max_iter, gtol, ftol):
+    value_and_grad_fun = optax.value_and_grad_from_state(fun)
 
-    # value, grad = fwd(t_inj)
-    # value = profit(t_inj)
-    # grad = jacobian_rev(t_inj)
+    def step(carry):
+        z, state, _ = carry
+        value, grad = value_and_grad_fun(z, state=state)   # value/grad at current z
+        updates, state = opt.update(
+            grad, state, z, value=value, grad=grad, value_fn=fun
+        )
+        z = optax.apply_updates(z, updates)
+        jax.debug.print(
+            " It : {it} , t_inj = {t} , F = {f} , |G| = {g}",
+            it=otu.tree_get(state, 'count'),
+            t=z_to_t(z)[0],
+            f=-otu.tree_get(state, 'value'),
+            g=otu.tree_l2_norm(otu.tree_get(state, 'grad')),
+        )
+        return z, state, value   # carry the previous value for the ftol check
+
+    def keep_going(carry):
+        _, state, f_prev = carry
+        it = otu.tree_get(state, 'count')
+        f_new = otu.tree_get(state, 'value')      # value at the new iterate
+        g_new = otu.tree_get(state, 'grad')
+
+        # scipy-style tolerances
+        gnorm = jnp.max(jnp.abs(g_new))                                   # gtol
+        rel_df = jnp.abs(f_prev - f_new) / jnp.maximum(
+            jnp.maximum(jnp.abs(f_prev), jnp.abs(f_new)), 1.0)            # ftol
+
+        converged = (gnorm <= gtol) | (rel_df <= ftol)
+        return (it == 0) | ((it < max_iter) & ~converged)
+
+    init_carry = (z0, opt.init(z0), jnp.array(jnp.inf, dtype=z0.dtype))
+    z_final, state_final, _ = jax.lax.while_loop(keep_going, step, init_carry)
+    return z_final, state_final
 
 
-    return float(value), np.array([float (grad)])
+solver = optax.lbfgs()   # default: zoom linesearch satisfying strong Wolfe
 
+run_opt_jit = jax.jit(
+    lambda z0: run_opt(z0, objective, solver, max_iter=100, gtol=1e-6, ftol=1e-16)
+)
 
-def optmz_jax(): 
-
-    
-    def callback(xk):
-        global cont
-
-        val , grad= F(xk)
-        print(" It : {} , t_inj = {} , F = {} , G = {} ".format(cont,xk[0],-val,grad[0]))
-        cont+=1
-
-    sol = minimize(F,x0 =10.00,  
-                   method='L-BFGS-B', 
-                   bounds=[(0.0,parameters.get('tf'))], 
-                   jac=True,
-                   options={'ftol':1e-16,'gtol':1e-6, 'disp' : True}, 
-                   callback = callback)
-
-    print(sol)
-    return sol
-
+t0 = 10.0
+z0 = jnp.array([t_to_z(t0)])
 
 start = time.perf_counter()
-
-sol = optmz_jax()
-
+z_opt, state = run_opt_jit(z0)
+z_opt.block_until_ready()          # JAX is async; wait before stopping the timer
 end = time.perf_counter()
-print("time:", end - start)
+
+t_opt = z_to_t(z_opt)[0]
+print(f"t_inj* = {float(t_opt):.6f}")
+print(f"Profit = {float(-objective(z_opt)) * 1e7:.4f}")
+print(f"Iterations = {int(otu.tree_get(state, 'count'))}")
+print("time (includes compilation):", end - start)
 print(jax.devices())
-
-# t_inj = jnp.arange(0,1400,25)
-# varredura = jnp.zeros_like(t_inj)
-
-# for i in range(len(t_inj)):
-    
-#     varredura = varredura.at[i].set(profit(t_inj[i]))
-
-# plt.figure(figsize=(12,8))
-# plt.scatter(sol.x[0],-sol.fun,label ='Minimize', color= 'red')
-# plt.plot(t_inj,-varredura,'--o', label = 'Brute Force')
-# plt.xlabel("Injection Time")
-# plt.ylabel("Profit")
-# plt.grid(True)
-# plt.legend()
-# plt.show()
-

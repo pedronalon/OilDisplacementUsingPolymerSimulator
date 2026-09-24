@@ -3,34 +3,40 @@ import jax
 import pandas as pd
 import h5py
 import numpy as np
+import json
+
+
+
+
+@jax.jit(static_argnames=['parameters', 'is_optimizing'])
 def jax_simulator(t_inj, parameters, is_optimizing = False):
 
-    Swc = parameters.get("Swc") 
-    Sor = parameters.get("Sor") 
+    Swc = parameters.Swc 
+    Sor = parameters.Sor 
 
-    krw0 = parameters.get("krw0") 
-    kro0 = parameters.get("kro0") 
-    k = parameters.get("k")
+    krw0 = parameters.krw0 
+    kro0 = parameters.kro0 
+    k = parameters.k
 
-    nw = parameters.get("nw")  
-    no = parameters.get("no") 
+    nw = parameters.nw  
+    no = parameters.no 
 
-    mu_w = parameters.get("mu_w") 
-    mu_o = parameters.get("mu_o") 
+    mu_w = parameters.mu_w 
+    mu_o = parameters.mu_o 
 
-    phi = parameters.get("phi") 
-    a = parameters.get("a") 
-    q = parameters.get("q") 
+    phi = parameters.phi 
+    a = parameters.a 
+    q = parameters.q 
 
-    ti = parameters.get("ti") 
-    tf = parameters.get("tf") 
+    ti = parameters.ti 
+    tf = parameters.tf 
 
-    Li = parameters.get("Li")
-    Lf = parameters.get("Lf") 
-    M = parameters.get("M")
-    M_0 = M[0] 
-    max_rrf = parameters.get("max_rrf")
-    Csf = parameters.get("Csf")
+    Li = parameters.Li
+    Lf = parameters.Lf 
+    M = parameters.M
+    M_0 = parameters.M 
+    max_rrf = parameters.max_rrf
+    Csf = parameters.Csf
 
     def Krw(Sw):
         sn = jnp.clip((Sw - Swc) / (1 - Swc - Sor), 0.0, 1.0)
@@ -195,12 +201,14 @@ def jax_simulator(t_inj, parameters, is_optimizing = False):
 
         V = phi*a*Lf
         pvi = (q*t)/V
+        
+        
+        #massa injetada, corrigir esse print depois 
+        # b = 1.0 
+        # poly_inj = jax.nn.sigmoid(b * (t_inj - t)) * 500.0
+        # mass = jnp.sum(q * poly_inj) * dt
 
-        b = 1.0 
-        poly_inj = jax.nn.sigmoid(b * (t_inj - t)) * 500.0
-        mass = jnp.sum(q * poly_inj) * dt
-
-        print("polymer injected mass: {}".format(mass))
+        # print("polymer injected mass: {}".format(mass))
         
         return (Sw_hist, p_hist, C_hist, prod_o_hist), dt, pvi, t, x, N
 
@@ -243,7 +251,7 @@ def generate_xdmf(file_prefix, M_0, t_save, h5_path):
         f.write("\n".join(xdmf_content))
 
 def jax_solver(parameters, dt_save=1.0, file_prefix="sim_output"):
-    t_inj = parameters.get("t_inj")
+    t_inj = parameters.t_inj
 
     (Sw_hist, p_hist, C_hist, prod_o_hist), dt, pvi, t, x, N = jax_simulator(t_inj, parameters, is_optimizing = False)
     
@@ -256,7 +264,7 @@ def jax_solver(parameters, dt_save=1.0, file_prefix="sim_output"):
     t_save = np.array(t[::save_step])
     
     
-    Li, Lf, M_0 = parameters["Li"], parameters["Lf"], parameters["M"][0]
+    Li, Lf, M_0 = parameters.Li, parameters.Lf, parameters.M
     dx = (Lf - Li) / (M_0 - 1)
     x_edges = np.linspace(Li - dx/2, Lf + dx/2, M_0 + 1)
     

@@ -1,8 +1,8 @@
-import sys
 import json
 import time
 import argparse
 from src.solvers.impes_jax import jax_solver
+from collections import namedtuple
 
 def main(): 
     # --- 1. CONFIGURAÇÃO DA LINHA DE COMANDO ---
@@ -25,19 +25,22 @@ def main():
     
     with open(path, 'r') as r:
         parameters = json.load(r)
-    
+
     # Se você digitou --t_inj no terminal, ele substitui o valor do JSON
     if args.t_inj is not None:
         parameters["t_inj"] = args.t_inj
-        
-    t_val = parameters.get("t_inj")
+
+    params_immutable = namedtuple('params_immutable',parameters.keys())
+    params_jax = params_immutable(**parameters)
+            
+    t_val = params_jax.t_inj
     prefix = f"simulacao_tinj_{t_val}"
     
     print(f'dt_save = {dt_save}')
     
     # --- 3. EXECUÇÃO DA SIMULAÇÃO ---
-    h5_path = jax_solver(parameters, dt_save=dt_save, file_prefix=prefix)
-
+    h5_path = jax_solver(params_jax, dt_save=dt_save, file_prefix=prefix)
+    
     end = time.perf_counter()
     print(f'execution time: {end - start:.2f}\n')
     
