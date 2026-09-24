@@ -1,8 +1,9 @@
 import jax.numpy as jnp
 import jax
 import pandas as pd
-
-def jax_simulator(t_inj, parameters, is_optimizing=False):
+import h5py
+import numpy as np
+def jax_simulator(t_inj, parameters, is_optimizing = False):
 
     Swc = parameters.get("Swc") 
     Sor = parameters.get("Sor") 
@@ -28,6 +29,8 @@ def jax_simulator(t_inj, parameters, is_optimizing=False):
     Lf = parameters.get("Lf") 
     M = parameters.get("M")
     M_0 = M[0] 
+    max_rrf = parameters.get("max_rrf")
+    Csf = parameters.get("Csf")
 
     def Krw(Sw):
         sn = jnp.clip((Sw - Swc) / (1 - Swc - Sor), 0.0, 1.0)
@@ -120,6 +123,15 @@ def jax_simulator(t_inj, parameters, is_optimizing=False):
 
         return pressure, Qw, Qt
 
+    def langmuir(C):
+        C_norm = C/500.00
+        A = 0.0
+        B = 0.0
+
+        d_dc = A/(1 + B*C_norm)**2
+        
+        return d_dc 
+
     def impes_step(carry, t_step):
         
         Sw, C, p = carry
@@ -136,22 +148,37 @@ def jax_simulator(t_inj, parameters, is_optimizing=False):
 
         Sw = Sw.at[-1].set(Sw_old[-1])
 
-        alpha = (qw*dt)/(vp)
-        alpha_inj = (q*dt)/(vp)
+        Sw = jnp.clip(Sw, Swc, 1.0 - Sor)
 
+        # alpha = (qw*dt)/(vp)
+        # alpha_inj = (q*dt)/(vp)
+
+        
         b = 1.0
         poly_inj = jax.nn.sigmoid(b*(t_inj-t_step)) * 500.00
         
-        C_f = ((Sw_old[-1] - alpha[-1]) * C[-1] + alpha[-1] * C[-2]) / Sw[-1]
-        C = C.at[-1].set(C_f)
-        
-        C_inernal = ((Sw_old[1:-1] - alpha[1:]) * C[1:-1] + alpha[:-1] * C[:-2]) / Sw[1:-1]
-        C = C.at[1:-1].set(C_inernal)
 
-        C_0 = ((Sw_old[0] - alpha[0]) * C[0] + alpha_inj * poly_inj) / Sw[0]
+        C_ads = langmuir(C)
+        C_old = C.copy()
+
+        # C_0 = ((Sw_old[0] - alpha[0]) * C[0] + alpha_inj * poly_inj) / Sw[0]
+
+        C_0 = ((C_old[0]*(Sw_old[0] + C_ads[0])) + (dt/vp)*(q * poly_inj - qw[0] * C_old[0]))/(
+            Sw[0] + C_ads[0])
+        
         C = C.at[0].set(C_0)
 
-        Sw = jnp.clip(Sw, Swc, 1.0 - Sor)
+        # C_internal = ((Sw_old[1:-1] - alpha[1:]) * C[1:-1] + alpha[:-1] * C[:-2]) / Sw[1:-1]
+        C_internal = (C_old[1:-1] * (Sw_old[1:-1] + C_ads[1:-1]) + (dt / vp) * (qw[:-1] * C_old[:-2] - qw[1:] * C_old[1:-1]))/(
+            Sw[1:-1] + C_ads[1:-1])
+        
+        C = C.at[1:-1].set(C_internal)
+
+        # C_f = ((Sw_old[-1] - alpha[-1]) * C[-1] + alpha[-1] * C[-2]) / Sw[-1]
+        C_f = (C_old[-1] * (Sw_old[-1] + C_ads[-1]) + (dt / vp) * (qw[-1] * C_old[-2] - qw[-1] * C[-1]))/(
+            Sw[-1] + C_ads[-1])
+
+        C = C.at[-1].set(C_f)
 
         prod_o = Qt[-1] - qw[-1]
 
@@ -165,48 +192,105 @@ def jax_simulator(t_inj, parameters, is_optimizing=False):
         return prod_o_hist, dt
     else:
         impes_sol, (Sw_hist, p_hist, C_hist, prod_o_hist) = jax.lax.scan(impes_step, (Sw, C, p), t)
-        return (Sw_hist, p_hist, C_hist, prod_o_hist), dt, t, x, N
+
+        V = phi*a*Lf
+        pvi = (q*t)/V
+
+        b = 1.0 
+        poly_inj = jax.nn.sigmoid(b * (t_inj - t)) * 500.0
+        mass = jnp.sum(q * poly_inj) * dt
+
+        print("polymer injected mass: {}".format(mass))
+        
+        return (Sw_hist, p_hist, C_hist, prod_o_hist), dt, pvi, t, x, N
 
 
-def jax_solver(parameters):
+
+
+def generate_xdmf(file_prefix, M_0, t_save, h5_path):
+    """Gera o arquivo XDMF já estruturado como um bloco 3D (Hexaedros)"""
+    xdmf_content = ['<?xml version="1.0" ?>', '<Xdmf Version="3.0">', '<Domain>', '<Grid GridType="Collection" CollectionType="Temporal">']
+    
+    for i, t in enumerate(t_save):
+        # Dimensions="2 2 M" cria 1 célula no eixo Y e 1 no eixo Z
+        grid = f"""
+        <Grid Name="Step_{i}" GridType="Uniform">
+            <Time Value="{t:.4f}"/>
+            <Topology TopologyType="3DRectMesh" Dimensions="2 2 {M_0+1}"/>
+            <Geometry GeometryType="VXVYVZ">
+                <DataItem Dimensions="2" Format="XML">0.0 1.0</DataItem>
+                <DataItem Dimensions="2" Format="XML">0.0 1.0</DataItem>
+                <DataItem Dimensions="{M_0+1}" Format="HDF">{h5_path}:/spatial/x_edges</DataItem>
+            </Geometry>
+            <Attribute Name="Sw" AttributeType="Scalar" Center="Cell">
+                <DataItem Dimensions="1 1 {M_0}" Format="HDF">{h5_path}:/spatial/Sw_{i}</DataItem>
+            </Attribute>
+            <Attribute Name="Pressure" AttributeType="Scalar" Center="Cell">
+                <DataItem Dimensions="1 1 {M_0}" Format="HDF">{h5_path}:/spatial/p_{i}</DataItem>
+            </Attribute>
+            <Attribute Name="Concentration" AttributeType="Scalar" Center="Cell">
+                <DataItem Dimensions="1 1 {M_0}" Format="HDF">{h5_path}:/spatial/C_{i}</DataItem>
+            </Attribute>
+        </Grid>"""
+        xdmf_content.append(grid)
+        
+    xdmf_content.extend(['</Grid>', '</Domain>', '</Xdmf>'])
+    
+    with open(f"outputs/{file_prefix}.xmf", "w") as f:
+        f.write("\n".join(xdmf_content))
+    
+    with open(f"outputs/{file_prefix}.xmf", "w") as f:
+        f.write("\n".join(xdmf_content))
+
+def jax_solver(parameters, dt_save=1.0, file_prefix="sim_output"):
     t_inj = parameters.get("t_inj")
 
-    (Sw_hist, p_hist, C_hist, prod_o_hist), dt, t, x, N = jax_simulator(t_inj, parameters, is_optimizing=False)
-    prod = jnp.cumsum(prod_o_hist)*dt
-    plot_values = [int(N/4)-1, int(N/2)-1, int(3*N/4)-1]
-
-    data = {
-            'x' : x ,
-
-            'Sw_1' : Sw_hist[plot_values[0],:],
-            'p_1' : p_hist[plot_values[0],:],
-
-            'Sw_2' : Sw_hist[plot_values[1],:],
-            'p_2' : p_hist[plot_values[1],:],
-
-            'Sw_3' : Sw_hist[plot_values[2],:], 
-            'p_3' : p_hist[plot_values[2],:], 
-
-            'Sw_4' : Sw_hist[-1,:], 
-            'p_4' : p_hist[-1,:] ,
-            
-            'C_1' : C_hist[plot_values[0],:],
-            'C_2' : C_hist[plot_values[1],:],
-            'C_3' : C_hist[plot_values[2],:], 
-            'C_4' : C_hist[-1,:] , 
-        }
-
-    prod_data =  {
-            't' : t,
-            'prod_1' : prod,
-        }
-
-    return pd.DataFrame(data), pd.DataFrame(prod_data)
+    (Sw_hist, p_hist, C_hist, prod_o_hist), dt, pvi, t, x, N = jax_simulator(t_inj, parameters, is_optimizing = False)
     
+    #  dt_save
+    save_step = max(1, int(dt_save / dt))
+    
+    Sw_save = np.array(Sw_hist[::save_step, :])
+    p_save = np.array(p_hist[::save_step, :])
+    C_save = np.array(C_hist[::save_step, :])
+    t_save = np.array(t[::save_step])
+    
+    
+    Li, Lf, M_0 = parameters["Li"], parameters["Lf"], parameters["M"][0]
+    dx = (Lf - Li) / (M_0 - 1)
+    x_edges = np.linspace(Li - dx/2, Lf + dx/2, M_0 + 1)
+    
+    #  EXPORTAR HDF5
+    h5_path = f"outputs/{file_prefix}.h5"
+    
+    with h5py.File(h5_path, 'w') as f:
+        # Grupo Temporal
+        temporal = f.create_group("temporal")
+        temporal.create_dataset("t", data=np.array(t))
+        temporal.create_dataset("pvi", data=np.array(pvi))
+        temporal.create_dataset("prod", data=np.array(jnp.cumsum(prod_o_hist) * dt))
+        temporal.create_dataset("Cp", data=np.array(C_hist[:, -1] / 500.0))
+        
+        # Grupo Espacial
+        spatial = f.create_group("spatial")
+        spatial.create_dataset("x_edges", data=x_edges)
+        spatial.create_dataset("x_centers", data=np.array(x))
+        spatial.create_dataset("t_save", data=t_save)
+        
+        for i in range(len(t_save)):
+            spatial.create_dataset(f"Sw_{i}", data=Sw_save[i, :])
+            spatial.create_dataset(f"p_{i}", data=p_save[i, :])
+            spatial.create_dataset(f"C_{i}", data=C_save[i, :])
+
+    #  EXPORTAR XDMF
+    generate_xdmf(file_prefix, M_0, t_save, f"{file_prefix}.h5")
+    
+    return h5_path
+
 
 def calc_prod_jax(t_inj, parameters):
     
-    prod_o_hist, dt = jax_simulator(t_inj, parameters, is_optimizing=True)
+    prod_o_hist, dt = jax_simulator(t_inj, parameters, is_optimizing = True)
     
     prod_total = jnp.sum(prod_o_hist) * dt
     

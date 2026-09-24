@@ -62,14 +62,14 @@ def impes_plot(tp):
 
     t = prod_data[:,1]
     # prod_list = [prod_data[:,2], prod_data[:,3], prod_data[:,4], prod_data[:,5], prod_data[:,6]]
-
-    plt.figure(figsize=(12,8))
-    for i in range(len(times)):
-        prod_plot = prod_data[:,i+2]
-        
-        plt.plot(t, prod_plot, label=f'inj time : {times[i] - t_init}')
     
-    plt.title("Oil Acumulated Production")
-    plt.grid(True)
-    plt.legend()
-    plt.show()
+    # plt.figure(figsize=(12,8))
+    # for i in range(1,len(times),2):
+    #     prod_plot = prod_data[:,i]
+        
+    #     plt.plot(t, prod_plot, label=f'inj time : {times[i] - t_init}')
+    
+    # plt.title("Oil Acumulated Production")
+    # plt.grid(True)
+    # plt.legend()
+    # plt.show()
