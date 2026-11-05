@@ -23,7 +23,7 @@ parameters = params_immutable(**parameters_dict)
 def profit(t_inj):
     
     # t_inj = t_inj_arr[0] 
-    
+    t_inj = jnp.squeeze(t_inj)
 
     prod = calc_prod_jax(t_inj,parameters)
    
@@ -43,26 +43,27 @@ def profit(t_inj):
     
     return -f
 
-# # jacobian_rev = jax.jit(jax.jacfwd(profit))
-# # profit_jit = jax.jit(profit)
+jacobian_rev = jax.jit(jax.jacfwd(profit))
+profit_jit = jax.jit(profit)
+
 # @jax.jit
 # def fwd(t_inj):
 #     value, grad = jax.jvp(profit,(t_inj,),(1.0,))
 #     return value, grad
 
 
-f_jax_jit = jax.jit(jax.value_and_grad(profit,argnums=0))
-fun = jax.value_and_grad(profit,argnums=0)
+# f_jax_jit = jax.jit(jax.value_and_grad(profit,argnums=0))
+# fun = jax.value_and_grad(profit,argnums=0)
 
 
 def F(t_inj_arr):
     t_inj = t_inj_arr[0]
     
-    value, grad = f_jax_jit(t_inj)
+    # value, grad = f_jax_jit(t_inj)
 
     # value, grad = fwd(t_inj)
-    # value = profit(t_inj)
-    # grad = jacobian_rev(t_inprint(np.float(prod))j)
+    value = profit_jit(t_inj)
+    grad = jacobian_rev(t_inj)
 
 
     return float(value), np.array([float (grad)])
@@ -80,7 +81,7 @@ def optmz_jax():
         print(" It : {} , t_inj = {} , F = {} , G = {} ".format(cont,xk[0],-val,grad[0]))
         cont+=1
 
-    sol = minimize(f_jax_jit,x0 = 10.00,  
+    sol = minimize(F,x0 = 10.00,  
                    method='L-BFGS-B', 
                    bounds=[(0.0,parameters.tf)], 
                    jac=True,
@@ -99,16 +100,16 @@ end = time.perf_counter()
 print("time:", end - start)
 print(jax.devices())
 
-# t_inj = jnp.linspace(0,2000,100,dtype=float)
-# varredura = jnp.zeros_like(t_inj)
+t_inj = jnp.linspace(0,2000,100,dtype=float)
+varredura = jnp.zeros_like(t_inj)
 
-# for i in range(len(t_inj)):
+for i in range(len(t_inj)):
     
-#     varredura = varredura.at[i].set(profit(t_inj[i]))
+    varredura = varredura.at[i].set(profit(t_inj[i]))
 
 plt.figure(figsize=(12,8))
 plt.scatter(sol.x[0],-sol.fun,label ='Minimize',marker = '^', color= 'red')
-# plt.plot(t_inj,-varredura,'--o', label = 'Varredura')
+plt.plot(t_inj,-varredura,'--o', label = 'Varredura')
 plt.xlabel("Tempo de injeção")
 plt.ylabel("Lucro")
 plt.grid(True)

@@ -19,9 +19,12 @@ def dt_calculation(parameters):
     phi = parameters.phi 
     a = parameters.a
     q = parameters.q
+
     Li = parameters.Li
     Lf = parameters.Lf
     M_0 = parameters.M
+
+    # dx = parameters.dx
     cfl = parameters.cfl
 
     def Krw_np(Sw):
@@ -32,26 +35,37 @@ def dt_calculation(parameters):
         sn = np.clip((Sw - Swc) / (1 - Swc - Sor), 0.0, 1.0)
         return kro0 * (1 - sn)**no 
 
-    Sw = np.linspace(0, 1, 1000)
+    Sw = np.linspace(1e-3, 1, 1000)
 
     lmbd_w_1 = (k * Krw_np(Sw)) / mu_w
-    lmbd_w_2 = (k * Krw_np(Sw)) / 7.8
+    # lmbd_w_2 = (k * Krw_np(Sw)) / 7.8
     lmbd_o = (k * Kro_np(Sw)) / mu_o 
 
     lmbd_t_1 = lmbd_o + lmbd_w_1
-    lmbd_t_2 = lmbd_o + lmbd_w_2 
+    # lmbd_t_2 = lmbd_o + lmbd_w_2 
 
     fw_1 = lmbd_w_1 / lmbd_t_1
-    fw_2 = lmbd_w_2 / lmbd_t_2
+    # fw_2 = lmbd_w_2 / lmbd_t_2
 
     dfw_1 = np.gradient(fw_1, Sw)
-    dfw_2 = np.gradient(fw_2, Sw)
+    # dfw_2 = np.gradient(fw_2, Sw)
 
-    max_fw = np.maximum(np.max(dfw_1), np.max(dfw_2)) 
+    # max_fw = np.maximum(np.max(dfw_1), np.max(dfw_2)) 
+    max_fw = np.max(dfw_1) 
+
+    # print(dfw_1)
+    # print(dfw_2)
 
     dx = (Lf - Li) / (M_0 - 1)
     v = q / a
-    dt = cfl * ((dx * phi) / (v * max_fw))
+    
+    dt_1 = cfl * ((dx * phi) / (v * max_fw))
+    dt_2 = (cfl * dx * a * phi)/(np.max(fw_1/Sw)* q)
+    # dt = np.minimum(dt_1,dt_2)
+    dt  = 0.005
+
+    print(f'saturation dt = {dt_1}')
+    print(f'concentration dt = {dt_2}')
 
     return dt
 
@@ -88,6 +102,7 @@ def jax_simulator(t_inj, parameters, is_optimizing = False):
     max_rrf = parameters.max_rrf
     Csf = parameters.Csf
     cfl = parameters.cfl
+    # dx = parameters.dx
 
     def Krw(Sw):
         sn = jnp.clip((Sw - Swc) / (1 - Swc - Sor), 0.0, 1.0)
@@ -112,6 +127,7 @@ def jax_simulator(t_inj, parameters, is_optimizing = False):
 
 
     dx = (Lf-Li)/(M_0-1)
+    print("dx: ", dx)
     v = q/a 
     vp = phi*a*dx
     
@@ -216,37 +232,37 @@ def jax_simulator(t_inj, parameters, is_optimizing = False):
 
         Sw = jnp.clip(Sw, Swc, 1.0 - Sor)
 
-        # alpha = (qw*dt)/(vp)
-        # alpha_inj = (q*dt)/(vp)
+        alpha = (qw*dt)/(vp)
+        alpha_inj = (q*dt)/(vp)
 
         
-        # b = 1.0
-        # poly_inj = jax.nn.sigmoid(b*(t_inj-t_step)) * 500.00
+        b = 100.0
+        poly_inj = jax.nn.sigmoid(b*(t_inj-t_step)) * 500.00
         
 
-        # C_ads = langmuir(C)
-        # C_old = C.copy()
+        C_ads = langmuir(C)
+        C_old = C.copy()
 
-        # # C_0 = ((Sw_old[0] - alpha[0]) * C[0] + alpha_inj * poly_inj) / Sw[0]
+        # C_0 = ((Sw_old[0] - alpha[0]) * C[0] + alpha_inj * poly_inj) / Sw[0]
 
-        # C_0 = ((C_old[0]*(Sw_old[0] + C_ads[0])) + (dt/vp)*(q * poly_inj - qw[0] * C_old[0]))/(
-        #     Sw[0] + C_ads[0])
+        C_0 = ((C_old[0]*(Sw_old[0] + C_ads[0])) + (dt/vp)*(q * poly_inj - qw[0] * C_old[0]))/(
+            Sw[0] + C_ads[0])
         
-        # C = C.at[0].set(C_0)
+        C = C.at[0].set(C_0)
 
-        # # C_internal = ((Sw_old[1:-1] - alpha[1:]) * C[1:-1] + alpha[:-1] * C[:-2]) / Sw[1:-1]
-        # C_internal = (C_old[1:-1] * (Sw_old[1:-1] + C_ads[1:-1]) + (dt / vp) * (qw[:-1] * C_old[:-2] - qw[1:] * C_old[1:-1]))/(
-        #     Sw[1:-1] + C_ads[1:-1])
+        # C_internal = ((Sw_old[1:-1] - alpha[1:]) * C[1:-1] + alpha[:-1] * C[:-2]) / Sw[1:-1]
+        C_internal = (C_old[1:-1] * (Sw_old[1:-1] + C_ads[1:-1]) + (dt / vp) * (qw[:-1] * C_old[:-2] - qw[1:] * C_old[1:-1]))/(
+            Sw[1:-1] + C_ads[1:-1])
         
-        # C = C.at[1:-1].set(C_internal)
+        C = C.at[1:-1].set(C_internal)
 
-        # # C_f = ((Sw_old[-1] - alpha[-1]) * C[-1] + alpha[-1] * C[-2]) / Sw[-1]
-        # C_f = (C_old[-1] * (Sw_old[-1] + C_ads[-1]) + (dt / vp) * (qw[-1] * C_old[-2] - qw[-1] * C[-1]))/(
-        #     Sw[-1] + C_ads[-1])
+        # C_f = ((Sw_old[-1] - alpha[-1]) * C[-1] + alpha[-1] * C[-2]) / Sw[-1]
+        C_f = (C_old[-1] * (Sw_old[-1] + C_ads[-1]) + (dt / vp) * (qw[-1] * C_old[-2] - qw[-1] * C[-1]))/(
+            Sw[-1] + C_ads[-1])
 
-        # C = C.at[-1].set(C_f)
+        C = C.at[-1].set(C_f)
 
-        C = C_analitico(x, t_step, t_inj, 0.5)
+        # C = C_analitico(x, t_step, t_inj, 0.5)
 
         prod_o = Qt[-1] - qw[-1]
 
@@ -266,18 +282,18 @@ def jax_simulator(t_inj, parameters, is_optimizing = False):
         
         
         
-        # b = 1.0 
-        # poly_inj = jax.nn.sigmoid(b * (t_inj - t)) * 500.0
-        # mass = jnp.sum(q * poly_inj) * dt
+        b = 1.0 
+        poly_inj = jax.nn.sigmoid(b * (t_inj - t)) * 500.0
+        mass = jnp.sum(q * poly_inj) * dt
 
-        # m_1 = jnp.trapezoid(a * phi * Sw_hist[-1, :] * C_hist[-1, :], x=x) 
-        # qw_out = q - prod_o_hist
-        # m_2 = jnp.trapezoid(qw_out * C_hist[:, -1], x=t) 
+        m_1 = jnp.trapezoid(a * phi * Sw_hist[-1, :] * C_hist[-1, :], x=x) 
+        qw_out = q - prod_o_hist
+        m_2 = jnp.trapezoid(qw_out * C_hist[:, -1], x=t) 
         
-        # m_num = m_1 + m_2
+        m_num = m_1 + m_2
 
         
-        return (Sw_hist, p_hist, C_hist, prod_o_hist), dt, pvi, t, x, N #, mass, m_num
+        return (Sw_hist, p_hist, C_hist, prod_o_hist), dt, pvi, t, x, N , mass, m_num
 
 
 
@@ -337,7 +353,7 @@ def generate_xdmf(file_prefix, M_0, t_save, h5_path):
 def jax_solver(parameters, dt_save=1.0, file_prefix="sim_output"):
     t_inj = parameters.t_inj
 
-    (Sw_hist, p_hist, C_hist, prod_o_hist), dt, pvi, t, x, N = jax_simulator(t_inj, parameters, is_optimizing = False)
+    (Sw_hist, p_hist, C_hist, prod_o_hist), dt, pvi, t, x, N, mass, m_num = jax_simulator(t_inj, parameters, is_optimizing = False)
     # , mass, m_num
     # dt_save
     save_step = max(1, int(dt_save / dt))
@@ -377,7 +393,7 @@ def jax_solver(parameters, dt_save=1.0, file_prefix="sim_output"):
     # EXPORTAR XDMF
     generate_xdmf(file_prefix, M_0, t_save, f"{file_prefix}.h5")
     
-    return h5_path, jnp.sum(prod_o_hist)*dt
+    return h5_path, jnp.sum(prod_o_hist)*dt, mass, m_num
 
 #, float(mass), float(m_num)
 

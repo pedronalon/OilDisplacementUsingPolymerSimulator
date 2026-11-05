@@ -50,7 +50,7 @@ def comparar_simulacoes(file1, file2, target_time):
             plt.plot(x1, y1, linewidth=2, label=f"{label1} | t = {t_save1[idx1]:.2f} d")
             plt.plot(x2, y2, linewidth=2, linestyle='--', label=f"{label2} | t = {t_save2[idx2]:.2f} d")
                         
-            plt.title(f"Comparação de Perfil: {nomes_espaciais[var]}, t")
+            plt.title(f"Comparação de Perfil: {nomes_espaciais[var]}")
             plt.xlabel("Distância x (ft)")
             plt.ylabel(var)
             plt.grid(True)
@@ -58,8 +58,8 @@ def comparar_simulacoes(file1, file2, target_time):
             plt.show()
 
 if __name__ == "__main__":
-    arquivo_1 = 'outputs/simulacao_tinj_50.0.h5'
-    arquivo_2 = 'outputs/simulacao_tinj_100.0.h5'
+    arquivo_1 = 'outputs/simulacao_tinj_0.0.h5'
+    arquivo_2 = 'outputs/simulacao_tinj_150.0.h5'
     
     tempo_analise = 952.00
     

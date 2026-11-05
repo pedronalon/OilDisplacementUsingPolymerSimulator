@@ -39,13 +39,13 @@ def main():
     print(f'dt_save = {dt_save}')
     
     # --- 3. EXECUÇÃO DA SIMULAÇÃO ---
-    h5_path, prod_o = jax_solver(params_jax, dt_save=dt_save, file_prefix=prefix)
-    # , mass, m_num
+    h5_path, prod_o, mass, m_num = jax_solver(params_jax, dt_save=dt_save, file_prefix=prefix)
+    # print(mass, m_num)
     end = time.perf_counter()
     print(f'execution time: {end - start:.2f}\n')
     print(f'oil acummulated production: {prod_o}')
-    # print("Exact mass: " , mass)
-    # print("Numeric mass" , m_num)
+    print("Exact mass: " , mass)
+    print("Numeric mass" , m_num)
     
     # # --- 4. CHAMADA AUTOMÁTICA DOS GRÁFICOS ---
     # tempo_final = parameters.get("tf", 800.0) 
