@@ -1,10 +1,11 @@
-import jax.numpy as jnp
+import h5py
+import json
 import jax
 import pandas as pd
-import h5py
 import numpy as np
-import json
-import numpy as np
+import jax.numpy as jnp
+
+# -----------------------------------------------------------------------------
 
 def dt_calculation(parameters):
     Swc = parameters.Swc
@@ -61,16 +62,13 @@ def dt_calculation(parameters):
     
     dt_1 = cfl * ((dx * phi) / (v * max_fw))
     dt_2 = (cfl * dx * a * phi)/(np.max(fw_1/Sw)* q)
-    # dt = np.minimum(dt_1,dt_2)
-    dt  = 0.005
-
+    dt = np.minimum(dt_1,dt_2)
+    # dt  = 0.005
     print(f'saturation dt = {dt_1}')
     print(f'concentration dt = {dt_2}')
-
     return dt
 
-
-
+# -----------------------------------------------------------------------------
 
 @jax.jit(static_argnames=['parameters', 'is_optimizing'])
 def jax_simulator(t_inj, parameters, is_optimizing = False):
@@ -118,11 +116,9 @@ def jax_simulator(t_inj, parameters, is_optimizing = False):
     def linear_interpolation(c, v, x):
         return jnp.interp(x, c, v)
 
-
     def C_analitico(x, t, t_inj, v_p):
         tau = t - x / v_p
         dentro_do_slug = (tau >= 0) & (tau <= t_inj)
-        
         return jnp.where(dentro_do_slug, 500.0, 0.0)
 
 
@@ -133,9 +129,12 @@ def jax_simulator(t_inj, parameters, is_optimizing = False):
     
     dt = dt_calculation(parameters)
     print("dt = ",dt)
-    N = int(tf/dt)
+    # N = int(tf/dt)
+    N = int(round(tf / dt))
 
-    t = jnp.linspace(ti, tf, N-1)
+    # t = jnp.linspace(ti, tf, N-1)
+    t = ti + dt * jnp.arange(N)   # N passos, espaçamento exatamente dt
+    
     x = jnp.linspace(Li, Lf, M_0)
 
     Sw = jnp.zeros(M_0).at[:].set(Swc+0.001)
@@ -209,17 +208,12 @@ def jax_simulator(t_inj, parameters, is_optimizing = False):
         C_norm = C/500.00
         A = 0.0
         B = 0.0
-
         d_dc = A/(1 + B*C_norm)**2
-        
         return d_dc 
 
     def impes_step(carry, t_step):
-        
         Sw, C, p = carry
-        
         p, qw, Qt = solve_pressure(p, Sw, C)
-
         Sw_old = Sw.copy()
         
         Sw_0 = Sw[0] + (dt / vp) * (q - qw[0])
@@ -235,10 +229,13 @@ def jax_simulator(t_inj, parameters, is_optimizing = False):
         alpha = (qw*dt)/(vp)
         alpha_inj = (q*dt)/(vp)
 
+        # b = 100.0
+        # poly_inj = jax.nn.sigmoid(b*(t_inj-t_step)) * 500.00
         
-        b = 100.0
-        poly_inj = jax.nn.sigmoid(b*(t_inj-t_step)) * 500.00
-        
+        # depois
+        frac = jnp.clip((t_inj - t_step) / dt, 0.0, 1.0)  # 1 antes do corte, fração no passo do corte
+                                                          # 0 depois
+        poly_inj = frac * 500.00
 
         C_ads = langmuir(C)
         C_old = C.copy()
@@ -279,11 +276,11 @@ def jax_simulator(t_inj, parameters, is_optimizing = False):
 
         V = phi*a*Lf
         pvi = (q*t)/V
+                    
+        # b = 1.0 
+        # poly_inj = jax.nn.sigmoid(b * (t_inj - t)) * 500.0
         
-        
-        
-        b = 1.0 
-        poly_inj = jax.nn.sigmoid(b * (t_inj - t)) * 500.0
+        poly_inj = jnp.clip((t_inj - t) / dt, 0.0, 1.0) * 500.0
         mass = jnp.sum(q * poly_inj) * dt
 
         m_1 = jnp.trapezoid(a * phi * Sw_hist[-1, :] * C_hist[-1, :], x=x) 
@@ -291,11 +288,62 @@ def jax_simulator(t_inj, parameters, is_optimizing = False):
         m_2 = jnp.trapezoid(qw_out * C_hist[:, -1], x=t) 
         
         m_num = m_1 + m_2
-
         
         return (Sw_hist, p_hist, C_hist, prod_o_hist), dt, pvi, t, x, N , mass, m_num
 
+def jax_solver(parameters, dt_save=1.0, file_prefix="sim_output"):
+    t_inj = parameters.t_inj
 
+    (Sw_hist, p_hist, C_hist, prod_o_hist), dt, pvi, t, x, N, mass, m_num = jax_simulator(t_inj, parameters, is_optimizing = False)
+    # , mass, m_num
+    # dt_save
+    save_step = max(1, int(dt_save / dt))
+    
+    # Estas variáveis já são extraídas como matrizes 2D (Tempo x Espaço)
+    Sw_save = np.array(Sw_hist[::save_step, :])
+    p_save = np.array(p_hist[::save_step, :])
+    C_save = np.array(C_hist[::save_step, :])
+    t_save = np.array(t[::save_step])
+    
+    Li, Lf, M_0 = parameters.Li, parameters.Lf, parameters.M
+    dx = (Lf - Li) / (M_0 - 1)
+    x_edges = np.linspace(Li - dx/2, Lf + dx/2, M_0 + 1)
+    
+    # EXPORTAR HDF5
+    h5_path = f"outputs/{file_prefix}.h5"
+    
+    with h5py.File(h5_path, 'w') as f:
+        # Grupo Temporal
+        temporal = f.create_group("temporal")
+        temporal.create_dataset("t", data=np.array(t))
+        temporal.create_dataset("pvi", data=np.array(pvi))
+        temporal.create_dataset("prod", data=np.array(jnp.cumsum(prod_o_hist) * dt))
+        temporal.create_dataset("Cp", data=np.array(C_hist[:, -1] / 500.0))
+        
+        # Grupo Espacial
+        spatial = f.create_group("spatial")
+        spatial.create_dataset("x_edges", data=x_edges)
+        spatial.create_dataset("x_centers", data=np.array(x))
+        spatial.create_dataset("t_save", data=t_save)
+        
+        # MUDANÇA: Criando as três grandes matrizes 2D em vez de iterar com o loop 'for'
+        spatial.create_dataset("Sw", data=Sw_save)
+        spatial.create_dataset("p", data=p_save)
+        spatial.create_dataset("C", data=C_save)
+
+    # EXPORTAR XDMF
+    generate_xdmf(file_prefix, M_0, t_save, f"{file_prefix}.h5")
+    
+    return h5_path, jnp.sum(prod_o_hist)*dt, mass, m_num
+
+# -----------------------------------------------------------------------------
+
+def calc_prod_jax(t_inj, parameters):
+    prod_o_hist, dt = jax_simulator(t_inj, parameters, is_optimizing = True)
+    prod_total = jnp.sum(prod_o_hist) * dt
+    return prod_total
+
+# -----------------------------------------------------------------------------
 
 def generate_xdmf(file_prefix, M_0, t_save, h5_path):
     """Gera o XDMF fatiando as matrizes 2D do HDF5 linha por linha usando HyperSlab."""
@@ -349,58 +397,3 @@ def generate_xdmf(file_prefix, M_0, t_save, h5_path):
     
     with open(f"outputs/{file_prefix}.xmf", "w") as f:
         f.write("\n".join(xdmf_content))
-
-def jax_solver(parameters, dt_save=1.0, file_prefix="sim_output"):
-    t_inj = parameters.t_inj
-
-    (Sw_hist, p_hist, C_hist, prod_o_hist), dt, pvi, t, x, N, mass, m_num = jax_simulator(t_inj, parameters, is_optimizing = False)
-    # , mass, m_num
-    # dt_save
-    save_step = max(1, int(dt_save / dt))
-    
-    # Estas variáveis já são extraídas como matrizes 2D (Tempo x Espaço)
-    Sw_save = np.array(Sw_hist[::save_step, :])
-    p_save = np.array(p_hist[::save_step, :])
-    C_save = np.array(C_hist[::save_step, :])
-    t_save = np.array(t[::save_step])
-    
-    Li, Lf, M_0 = parameters.Li, parameters.Lf, parameters.M
-    dx = (Lf - Li) / (M_0 - 1)
-    x_edges = np.linspace(Li - dx/2, Lf + dx/2, M_0 + 1)
-    
-    # EXPORTAR HDF5
-    h5_path = f"outputs/{file_prefix}.h5"
-    
-    with h5py.File(h5_path, 'w') as f:
-        # Grupo Temporal
-        temporal = f.create_group("temporal")
-        temporal.create_dataset("t", data=np.array(t))
-        temporal.create_dataset("pvi", data=np.array(pvi))
-        temporal.create_dataset("prod", data=np.array(jnp.cumsum(prod_o_hist) * dt))
-        temporal.create_dataset("Cp", data=np.array(C_hist[:, -1] / 500.0))
-        
-        # Grupo Espacial
-        spatial = f.create_group("spatial")
-        spatial.create_dataset("x_edges", data=x_edges)
-        spatial.create_dataset("x_centers", data=np.array(x))
-        spatial.create_dataset("t_save", data=t_save)
-        
-        # MUDANÇA: Criando as três grandes matrizes 2D em vez de iterar com o loop 'for'
-        spatial.create_dataset("Sw", data=Sw_save)
-        spatial.create_dataset("p", data=p_save)
-        spatial.create_dataset("C", data=C_save)
-
-    # EXPORTAR XDMF
-    generate_xdmf(file_prefix, M_0, t_save, f"{file_prefix}.h5")
-    
-    return h5_path, jnp.sum(prod_o_hist)*dt, mass, m_num
-
-#, float(mass), float(m_num)
-
-def calc_prod_jax(t_inj, parameters):
-    
-    prod_o_hist, dt = jax_simulator(t_inj, parameters, is_optimizing = True)
-    
-    prod_total = jnp.sum(prod_o_hist) * dt
-    
-    return prod_total
